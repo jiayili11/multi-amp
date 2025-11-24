@@ -1,0 +1,16 @@
+data/
+checkpoints/
+design_results/
+*.pth
+*.pt
+__pycache__/
+.vscode/
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+env/
+venv/
+*.egg-info/
+*.pyc
+*.pkl
+secrets.env
