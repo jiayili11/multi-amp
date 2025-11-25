@@ -1,10 +1,64 @@
 # MultiAMP: Multi-Stream Deep Learning for Antimicrobial Peptide Prediction
 
+MultiAMP is a deep learning framework for antimicrobial peptide (AMP) prediction and design.  
+It combines protein language models, sequence models and structure-aware graph neural networks to learn multi-scale peptide representations.
 
-Antimicrobial resistance (AMR) is accelerating worldwide, undermining frontline antibiotics and making the need for novel agents more urgent than ever.
-Antimicrobial peptides (AMPs) are promising therapeutics against multidrug-resistant pathogens, as they are less prone to inducing resistance.
-However, current AMP prediction approaches often treat sequence and structure in isolation and at a single scale, leading to mediocre performance. Here, we propose MultiAMP, a framework that integrates multi-level information for predicting AMPs. The model captures evolutionary and contextual information from sequences alongside global and fine-grained information from structures, synergistically combining these features to enhance predictive power.
-MultiAMP achieves state-of-the-art performance, outperforming existing AMP prediction methods by over 10\% in MCC when identifying distant AMPs sharing less than 40\% sequence identity with known AMPs. 
-To discover novel AMPs, we applied MultiAMP to marine organism data, discovering 484 high-confidence peptides with sequences that are highly divergent from known AMPs. Notably, MultiAMP accurately recognizes various structural types of peptides. 
-In addition, our approach reveals functional patterns of AMPs, providing interpretable insights into their mechanisms. Building on these findings, we further employed a gradient-based strategy and achieved the design of AMPs with specific motifs.
-We believe that MultiAMP empowers both the rational discovery and mechanistic understanding of AMPs, facilitating future experimental validation and precision therapeutic design.
+---
+
+## Data and Models
+
+Trained models and data are available on Hugging Face:
+
+- https://huggingface.co/jiayi11/multi_amp
+
+Place downloaded checkpoints (e.g. `best_model_overall.pth`) in the `checkpoints/` directory.
+
+---
+
+## Installation
+
+### Option 1: Using conda (recommended)
+```bash
+conda env create -f environment.yml
+conda activate multiamp
+pip install -e .
+```
+### Option 2: Minimal dependencies
+
+```
+pip install torch esm biopython scipy scikit-learn pandas tqdm
+pip install -e .
+```
+---
+
+## Command line
+
+### Prediction from FASTA
+```
+python scripts/predict.py \
+  --model_path checkpoints/best_model_overall.pth \
+  --fasta_path examples/example.fasta \
+  --output_path results/predictions.csv
+```
+### De novo design
+```
+python scripts/design.py \
+  --model_path checkpoints/best_model_overall.pth \
+  --mode de_novo \
+  --n_sequences 500 \
+  --length 20 \
+  --iterations 100 \
+  --top_k 5 \
+  --output_dir design_results/denovo
+```
+### Motif-guided design
+```
+python scripts/design.py \
+  --model_path checkpoints/best_model_overall.pth \
+  --mode motif \
+  --motif KLLKLLK \
+  --n_variants 100 \
+  --iterations 100 \
+  --top_k 5 \
+  --output_dir design_results/motif
+```
