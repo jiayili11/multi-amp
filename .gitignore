@@ -18,3 +18,4 @@ venv/
 secrets.env
 train.log
 RFdiffusion/
+upload_to_hf.py
