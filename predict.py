@@ -1,9 +1,23 @@
 """
 MultiAMP Prediction Script
-Based on amppre/predict.py, for model evaluation
+Supports two modes:
+  1. Evaluate on validation dataset (default)
+  2. Predict from a FASTA file (--fasta_path)
 """
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='MultiAMP Prediction')
+    parser.add_argument('--model_path', type=str, default=None, help='Path to model checkpoint (default: checkpoints/best_model.pth)')
+    parser.add_argument('--fasta_path', type=str, default=None, help='Path to FASTA file for prediction (sequence-only mode)')
+    parser.add_argument('--output_path', type=str, default=None, help='Output CSV path (default: auto-generated)')
+    parser.add_argument('--batch_size', type=int, default=None, help='Batch size (default: from config)')
+    parser.add_argument('--gpu', type=str, default='1', help='GPU device ID (default: 1)')
+    return parser.parse_args()
+
+args = parse_args()
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
 import torch
 from torch.utils.data import DataLoader
@@ -95,13 +109,114 @@ def evaluate_predictions(results):
     return metrics
 
 
+def predict_from_fasta(model, fasta_path, device, batch_size=16):
+    """
+    Predict AMP probability from a plain FASTA file (no labels or PDB needed).
+    
+    Args:
+        model: Trained model
+        fasta_path: Path to FASTA file with sequences
+        device: Device
+        batch_size: Batch size for prediction
+    
+    Returns:
+        List of dicts with sequence, probability, prediction
+    """
+    from Bio import SeqIO
+    
+    # Parse FASTA
+    sequences = []
+    seq_ids = []
+    for record in SeqIO.parse(fasta_path, "fasta"):
+        seq_ids.append(record.id)
+        sequences.append(str(record.seq))
+    
+    if not sequences:
+        print(f"No sequences found in {fasta_path}")
+        return []
+    
+    print(f"Loaded {len(sequences)} sequences from {fasta_path}")
+    
+    model.eval()
+    results = []
+    
+    with torch.no_grad():
+        for i in range(0, len(sequences), batch_size):
+            batch_seqs = sequences[i:i+batch_size]
+            batch_ids = seq_ids[i:i+batch_size]
+            max_len = max(len(s) for s in batch_seqs)
+            
+            # Build attention mask
+            attention_mask = []
+            for seq in batch_seqs:
+                mask = [1] * len(seq) + [0] * (max_len - len(seq))
+                attention_mask.append(mask)
+            attention_mask = torch.tensor(attention_mask, dtype=torch.float).to(device)
+            
+            # Forward pass (sequence-only mode, no structural features)
+            outputs = model(
+                batch_seqs,
+                attention_mask,
+            )
+            
+            probs = torch.sigmoid(outputs['class_logits']).cpu().numpy()
+            
+            for j, (sid, seq) in enumerate(zip(batch_ids, batch_seqs)):
+                results.append({
+                    'id': sid,
+                    'sequence': seq,
+                    'length': len(seq),
+                    'probability': float(probs[j]),
+                    'prediction': 'AMP' if probs[j] > 0.5 else 'non-AMP'
+                })
+    
+    return results
+
+
 def main():
     config = MultiAMPConfig()
-    device = torch.device(config.DEVICE)
     
+    # Override config with CLI args
+    if args.batch_size is not None:
+        config.BATCH_SIZE = args.batch_size
+    
+    device = torch.device(config.DEVICE)
     print(f"Using device: {device}")
     
-    # Load validation dataset
+    # Load model
+    print("\n=== Loading Model ===")
+    model = PeptideTriStreamModel(config).to(device)
+    
+    model_path = args.model_path or f"{config.SAVE_DIR}/best_model.pth"
+    if not os.path.exists(model_path):
+        print(f"Error: Model not found: {model_path}")
+        return
+    
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
+    print(f"Model loaded from {model_path}")
+    
+    # Mode 1: Predict from FASTA file
+    if args.fasta_path:
+        print(f"\n=== Predicting from FASTA: {args.fasta_path} ===")
+        results = predict_from_fasta(model, args.fasta_path, device, config.BATCH_SIZE)
+        
+        if results:
+            output_path = args.output_path or args.fasta_path.replace('.fasta', '_predictions.csv').replace('.fa', '_predictions.csv')
+            if output_path == args.fasta_path:
+                output_path = args.fasta_path + '_predictions.csv'
+            
+            df = pd.DataFrame(results)
+            df.to_csv(output_path, index=False)
+            
+            n_amp = sum(1 for r in results if r['prediction'] == 'AMP')
+            print(f"\n=== Results ===")
+            print(f"Total sequences: {len(results)}")
+            print(f"Predicted AMP: {n_amp}")
+            print(f"Predicted non-AMP: {len(results) - n_amp}")
+            print(f"Predictions saved to {output_path}")
+        return
+    
+    # Mode 2: Evaluate on validation dataset
     print("\n=== Loading Validation Dataset ===")
     pdb_dirs_map = {
         1: config.AMP_VALID_PDB_DIR,
@@ -127,18 +242,6 @@ def main():
         pin_memory=True
     )
     
-    # Load model
-    print("\n=== Loading Model ===")
-    model = PeptideTriStreamModel(config).to(device)
-    
-    model_path = f"{config.SAVE_DIR}/best_model.pth"
-    if not os.path.exists(model_path):
-        print(f"❌ Model not found: {model_path}")
-        return
-    
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    print(f"✅ Model loaded from {model_path}")
-    
     # Generate predictions
     print("\n=== Generating Predictions ===")
     results = predict(model, valid_loader, device)
@@ -155,10 +258,10 @@ def main():
     print(f"MCC:       {metrics['mcc']:.4f}")
     
     # Save predictions
-    output_path = f"{config.SAVE_DIR}/predictions.csv"
+    output_path = args.output_path or f"{config.SAVE_DIR}/predictions.csv"
     df = pd.DataFrame(results)
     df.to_csv(output_path, index=False)
-    print(f"\n💾 Predictions saved to {output_path}")
+    print(f"\nPredictions saved to {output_path}")
 
 
 if __name__ == '__main__':

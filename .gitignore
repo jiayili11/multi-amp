@@ -1,8 +1,10 @@
 data/
 checkpoints/
 design_results/
+input/
 *.pth
 *.pt
+*.tar.gz
 __pycache__/
 .vscode/
 .pytest_cache/
@@ -14,3 +16,5 @@ venv/
 *.pyc
 *.pkl
 secrets.env
+train.log
+RFdiffusion/

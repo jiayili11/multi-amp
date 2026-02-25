@@ -1,10 +1,35 @@
 """
 MultiAMP Design Script
-Based on amppre/generate_figure5_data.py
-Includes de novo design and motif-guided design
+Includes de novo design and motif-guided design via Gumbel-Softmax optimization
 """
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='MultiAMP Peptide Design')
+    parser.add_argument('--mode', type=str, default='de_novo', choices=['de_novo', 'motif'],
+                        help='Design mode: de_novo or motif (default: de_novo)')
+    parser.add_argument('--model_path', type=str, default=None,
+                        help='Path to model checkpoint (default: checkpoints/best_model.pth)')
+    parser.add_argument('--n_sequences', type=int, default=10,
+                        help='Number of candidate sequences to generate (default: 10)')
+    parser.add_argument('--length', type=int, default=25,
+                        help='Target sequence length for de_novo mode (default: 25)')
+    parser.add_argument('--iterations', type=int, default=50,
+                        help='Number of optimization iterations per sequence (default: 50)')
+    parser.add_argument('--top_k', type=int, default=5,
+                        help='Number of top candidates to report (default: 5)')
+    parser.add_argument('--motif', type=str, default='KLLKLLK',
+                        help='Motif sequence for motif mode (default: KLLKLLK)')
+    parser.add_argument('--motif_start', type=int, default=5,
+                        help='Starting position of motif in the sequence (default: 5)')
+    parser.add_argument('--output_dir', type=str, default='./design_results',
+                        help='Output directory (default: ./design_results)')
+    parser.add_argument('--gpu', type=str, default='1', help='GPU device ID (default: 1)')
+    return parser.parse_args()
+
+args = parse_args()
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
 import torch
 import torch.nn.functional as F
@@ -266,62 +291,54 @@ def main():
     print("\n=== Loading Model ===")
     model = PeptideTriStreamModel(config).to(device)
     
-    model_path = f"{config.SAVE_DIR}/best_model.pth"
+    model_path = args.model_path or f"{config.SAVE_DIR}/best_model.pth"
     if not os.path.exists(model_path):
-        print(f"❌ Model not found: {model_path}")
+        print(f"Error: Model not found: {model_path}")
         return
     
     model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
-    print(f"✅ Model loaded from {model_path}")
+    print(f"Model loaded from {model_path}")
     
     # Create output directory
-    output_dir = "./design_results"
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
     
-    # Experiment 1: De novo design
-    print("\n" + "="*70)
-    print("Experiment 1: De Novo AMP Design")
-    print("="*70)
-    
-    # Quick test version (reduced numbers for fast testing)
-    denovo_results = design_de_novo(
-        model, device,
-        n_sequences=10,  # Reduced from 500 to 10
-        select_top=5,
-        n_iterations=50  # Reduced from 100 to 50
-    )
-    denovo_results.to_csv(f"{output_dir}/denovo_top5.csv", index=False)
-    
-    # Experiment 2: Motif-guided design
-    print("\n" + "="*70)
-    print("Experiment 2: Motif-Guided AMP Design")
-    print("="*70)
-    
-    motifs = [
-        ('KKK', 5),
-        ('KRK', 8),
-        ('KLLKL', 3),
-    ]
-    
-    all_motif_results = []
-    for motif_seq, motif_start in motifs:
-        results = design_with_motif(
+    if args.mode == 'de_novo':
+        print("\n" + "="*70)
+        print("De Novo AMP Design")
+        print("="*70)
+        
+        denovo_results = design_de_novo(
             model, device,
-            motif_seq=motif_seq,
-            motif_start=motif_start,
-            n_variants=10,  # Reduced from 100 to 10
-            select_top=3,   # Reduced from 5 to 3
-            total_length=25,
-            n_iterations=50  # Reduced from 100 to 50
+            n_sequences=args.n_sequences,
+            select_top=args.top_k,
+            seq_length_range=(max(10, args.length - 10), args.length + 10),
+            n_iterations=args.iterations
         )
-        all_motif_results.append(results)
+        output_path = os.path.join(args.output_dir, 'denovo_results.csv')
+        denovo_results.to_csv(output_path, index=False)
+        print(f"\nResults saved to {output_path}")
     
-    # Save all motif results
-    motif_combined = pd.concat(all_motif_results, ignore_index=True)
-    motif_combined.to_csv(f"{output_dir}/motif_designs.csv", index=False)
+    elif args.mode == 'motif':
+        print("\n" + "="*70)
+        print(f"Motif-Guided AMP Design (motif: {args.motif})")
+        print("="*70)
+        
+        total_length = max(args.length, args.motif_start + len(args.motif) + 3)
+        
+        motif_results = design_with_motif(
+            model, device,
+            motif_seq=args.motif,
+            motif_start=args.motif_start,
+            n_variants=args.n_sequences,
+            select_top=args.top_k,
+            total_length=total_length,
+            n_iterations=args.iterations
+        )
+        output_path = os.path.join(args.output_dir, 'motif_results.csv')
+        motif_results.to_csv(output_path, index=False)
+        print(f"\nResults saved to {output_path}")
     
-    print(f"\n💾 Results saved to {output_dir}/")
-    print("✅ Design completed!")
+    print("\nDesign completed!")
 
 
 if __name__ == '__main__':
