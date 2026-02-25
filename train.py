@@ -342,12 +342,9 @@ def main():
         print(f"SS Recon Acc -> Overall: {avg_ss_acc:.4f} | {' | '.join([f'{k}: {v:.4f}' for k, v in avg_class_acc.items()])}")
         
         # Save best model
-        # if val_auc > best_auc:
-        #     best_auc = val_auc
-        #     best_epoch = epoch + 1
-        #     save_path = os.path.join(config.SAVE_DIR, "best_model_overall.pth")
-        #     torch.save(model.state_dict(), save_path)
-        #     print(f"New best model saved (AUC: {val_auc:.4f} at Epoch {best_epoch})")
+        # save_path = os.path.join(config.SAVE_DIR, "best_model_overall.pth")
+        # torch.save(model.state_dict(), save_path)
+
 
 
 if __name__ == '__main__':
